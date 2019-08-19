@@ -63,6 +63,7 @@
 #include "tf2_ros/transform_broadcaster.h"
 #include "tf2_ros/transform_listener.h"
 #include "message_filters/subscriber.h"
+#include "amcl/RectPara.h"
 
 // Dynamic_reconfigure
 #include "dynamic_reconfigure/server.h"
@@ -75,6 +76,8 @@
 
 // For monitoring the estimator
 #include <diagnostic_updater/diagnostic_updater.h>
+#include <amcl/pf/pf_vector.h>
+#include <amcl/map/map.h>
 
 #define NEW_UNIFORM_SAMPLING 1
 
@@ -117,6 +120,20 @@ angle_diff(double a, double b)
 
 static const std::string scan_topic_ = "scan";
 
+static double range_min_x;
+static double range_max_x;
+static double range_min_y;
+static double range_max_y;
+
+typedef AMCLLaserData rr_laser_range_t;
+typedef std::vector<double> rr_laser_t;
+typedef struct
+{
+    int x, y;
+    double theta;
+    int score;
+} rr_relocate_node_t;
+
 /* This function is only useful to have the whole code work
  * with old rosbags that have trailing slashes for their frames
  */
@@ -156,12 +173,15 @@ class AmclNode
     // Pose-generating function used to uniformly distribute particles over
     // the map
     static pf_vector_t uniformPoseGenerator(void* arg);
+    static pf_vector_t areaPoseGenerator(void* arg);
 #if NEW_UNIFORM_SAMPLING
     static std::vector<std::pair<int,int> > free_space_indices;
 #endif
     // Callbacks
     bool globalLocalizationCallback(std_srvs::Empty::Request& req,
                                     std_srvs::Empty::Response& res);
+    bool rangeLocalizationCallback(amcl::RectPara::Request& req,
+                                   amcl::RectPara::Response& res);
     bool nomotionUpdateCallback(std_srvs::Empty::Request& req,
                                     std_srvs::Empty::Response& res);
     bool setMapCallback(nav_msgs::SetMap::Request& req,
@@ -248,6 +268,7 @@ class AmclNode
     ros::Publisher pose_pub_;
     ros::Publisher particlecloud_pub_;
     ros::ServiceServer global_loc_srv_;
+    ros::ServiceServer range_loc_srv_;
     ros::ServiceServer nomotion_update_srv_; //to let amcl update samples without requiring motion
     ros::ServiceServer set_map_srv_;
     ros::Subscriber initial_pose_sub_old_;
@@ -287,6 +308,13 @@ class AmclNode
     ros::Time last_laser_received_ts_;
     ros::Duration laser_check_interval_;
     void checkLaserReceived(const ros::TimerEvent& event);
+
+    rr_laser_t rr_laser_scan;
+    int rr_laser_count;
+    double rr_laser_min_angle, rr_laser_increment_angle, rr_laser_max_range;
+    int calcuThreshold(const rr_laser_t& scan);
+    int calcuScore(const rr_laser_t& scan, rr_relocate_node_t& pose);
+    bool isMapObs(int x, int y);
 };
 
 std::vector<std::pair<int,int> > AmclNode::free_space_indices;
@@ -461,6 +489,9 @@ AmclNode::AmclNode() :
   global_loc_srv_ = nh_.advertiseService("global_localization", 
 					 &AmclNode::globalLocalizationCallback,
                                          this);
+  range_loc_srv_ = nh_.advertiseService("range_localization",
+                                         &AmclNode::rangeLocalizationCallback,
+                                         this);
   nomotion_update_srv_= nh_.advertiseService("request_nomotion_update", &AmclNode::nomotionUpdateCallback, this);
   set_map_srv_= nh_.advertiseService("set_map", &AmclNode::setMapCallback, this);
 
@@ -494,6 +525,12 @@ AmclNode::AmclNode() :
 
   diagnosic_updater_.setHardwareID("None");
   diagnosic_updater_.add("Standard deviation", this, &AmclNode::standardDeviationDiagnostics);
+
+  rr_laser_scan.reserve(360);
+  rr_laser_count = 0;
+  rr_laser_min_angle = 0.0;
+  rr_laser_max_range = 0.0;
+  rr_laser_increment_angle = 0.0;
 }
 
 void AmclNode::reconfigureCB(AMCLConfig &config, uint32_t level)
@@ -1052,6 +1089,34 @@ AmclNode::uniformPoseGenerator(void* arg)
   return p;
 }
 
+pf_vector_t
+AmclNode::areaPoseGenerator(void* arg)
+{
+  map_t* map = (map_t*)arg;
+
+  double min_x = range_min_x;
+  double max_x = range_max_x;
+  double min_y = range_min_y;
+  double max_y = range_max_y;
+
+  pf_vector_t p;
+
+  ROS_DEBUG("Generating new area sample");
+  for(;;)
+  {
+    p.v[0] = min_x + drand48() * (max_x - min_x);
+    p.v[1] = min_y + drand48() * (max_y - min_y);
+    p.v[2] = drand48() * 2 * M_PI - M_PI;
+    // Check that it's a free cell
+    int i,j;
+    i = MAP_GXWX(map, p.v[0]);
+    j = MAP_GYWY(map, p.v[1]);
+    if(MAP_VALID(map,i,j) && (map->cells[MAP_INDEX(map,i,j)].occ_state == -1))
+      break;
+  }
+  return p;
+}
+
 bool
 AmclNode::globalLocalizationCallback(std_srvs::Empty::Request& req,
                                      std_srvs::Empty::Response& res)
@@ -1064,6 +1129,104 @@ AmclNode::globalLocalizationCallback(std_srvs::Empty::Request& req,
   pf_init_model(pf_, (pf_init_model_fn_t)AmclNode::uniformPoseGenerator,
                 (void *)map_);
   ROS_INFO("Global initialisation done!");
+  pf_init_ = false;
+  return true;
+}
+
+bool
+AmclNode::rangeLocalizationCallback(amcl::RectPara::Request& req,
+                                    amcl::RectPara::Response& res)
+{
+  if( map_ == NULL ) {
+    return true;
+  }
+  boost::recursive_mutex::scoped_lock gl(configuration_mutex_);
+  range_min_x = req.rect_min_x;
+  range_max_x = req.rect_max_x;
+  range_min_y = req.rect_min_y;
+  range_max_y = req.rect_max_y;
+  if (range_min_x > range_max_x || range_min_y > range_max_y) {
+    ROS_ERROR("Illegal rect!");
+    return false;
+  }
+  ROS_INFO("Start relocating, rect is [(%.3f, %.3f),(%.3f, %.3f)]", range_min_x, range_min_y, range_max_x, range_max_y);
+//  pf_init_model(pf_, (pf_init_model_fn_t)AmclNode::areaPoseGenerator,
+//                (void *)map_);
+//  ROS_INFO("Global range initialisation done!");
+
+  int cell_min_x = MAP_GXWX(map_, range_min_x);
+  int cell_max_x = MAP_GXWX(map_, range_max_x);
+  int cell_min_y = MAP_GYWY(map_, range_min_y);
+  int cell_max_y = MAP_GYWY(map_, range_max_y);
+
+  bool updated = false;
+  auto single_laser = rr_laser_t(360);
+  for (auto i = 0; i < 360; i++) {
+    single_laser[i] = rr_laser_scan[i];
+  }
+//  rr_laser_count = single_laser->ranges.size();
+//  rr_laser_min_angle = single_laser->angle_min;
+//  rr_laser_increment_angle = single_laser->angle_increment;
+  ROS_INFO("min angle: %f, inc angle: %f, count: %d", rr_laser_min_angle, rr_laser_increment_angle, rr_laser_count);
+
+  auto best_node = rr_relocate_node_t {};
+  auto threshold = calcuThreshold(single_laser);
+  auto local_score = 0;
+
+#pragma omp parallel for
+  for (auto th = -M_PI; th < M_PI;) {
+    for (auto x = cell_min_x; x <= cell_max_x; x++) {
+      for (auto y = cell_min_y; y <= cell_max_y; y++) {
+        if (!MAP_VALID(map_, x, y) || map_->cells[MAP_INDEX(map_, x, y)].occ_state != -1)
+          continue;
+
+        auto pose = rr_relocate_node_t {x, y, th, 0};
+        pose.score = calcuScore(single_laser, pose);
+        if (pose.score > threshold && pose.score > best_node.score) {
+          updated   = true;
+          best_node = pose;
+        }
+        if (pose.score > local_score) {
+          local_score = pose.score;
+        }
+      }
+    }
+    th += (M_PI / 180.0);
+  }
+
+  //Print map
+//  ROS_INFO("map info orx: %.3f, ory: %.3f, sizx: %d, sizy: %d", map_->origin_x, map_->origin_y, map_->size_x, map_->size_y);
+//  ROS_INFO("%.3f\t%.3f", MAP_WXGX(map_, cell_min_x), MAP_WYGY(map_, cell_min_y));
+//  ROS_INFO("%d\t%d", cell_min_x, cell_min_y);
+//  for (auto x = cell_min_x - 100; x <= cell_max_x + 100; x++) {
+//    for (auto y = cell_min_y - 100; y <= cell_max_y + 100; y++) {
+//      if (MAP_VALID(map_, x, y) && map_->cells[MAP_INDEX(map_, x, y)].occ_state == 1) {
+//        ROS_INFO("%d\t%d", x, y);
+//      }
+//    }
+//  }
+
+  ROS_INFO("best score is %d", local_score);
+  if (updated) {
+    pf_vector_t pf_relocate_pose_mean;
+    pf_relocate_pose_mean.v[0] = MAP_WXGX(map_, best_node.x);
+    pf_relocate_pose_mean.v[1] = MAP_WYGY(map_, best_node.y);
+    pf_relocate_pose_mean.v[2] = best_node.theta;
+    ROS_INFO("Range relocate success! pose is [%.3f, %.3f, %.3f], score is %d",
+             pf_relocate_pose_mean.v[0],
+             pf_relocate_pose_mean.v[1],
+             pf_relocate_pose_mean.v[2] * 180.0/ M_PI,
+             best_node.score);
+    pf_matrix_t pf_relocate_pose_cov = pf_matrix_zero();
+    pf_relocate_pose_cov.m[0][0] = init_cov_[0];
+    pf_relocate_pose_cov.m[1][1] = init_cov_[1];
+    pf_relocate_pose_cov.m[2][2] = init_cov_[2];
+    pf_init(pf_, pf_relocate_pose_mean, pf_relocate_pose_cov);
+  } else {
+    pf_init_model(pf_, (pf_init_model_fn_t) AmclNode::areaPoseGenerator,
+                  (void*) map_);
+    ROS_INFO("Find best match failed! Generate random pfs");
+  }
   pf_init_ = false;
   return true;
 }
@@ -1098,6 +1261,8 @@ AmclNode::laserReceived(const sensor_msgs::LaserScanConstPtr& laser_scan)
   }
   boost::recursive_mutex::scoped_lock lr(configuration_mutex_);
   int laser_index = -1;
+
+//  rr_laser_scan = laser_scan;
 
   // Do we have the base->base_laser Tx yet?
   if(frame_to_laser_.find(laser_scan_frame_id) == frame_to_laser_.end())
@@ -1220,6 +1385,7 @@ AmclNode::laserReceived(const sensor_msgs::LaserScanConstPtr& laser_scan)
     AMCLLaserData ldata;
     ldata.sensor = lasers_[laser_index];
     ldata.range_count = laser_scan->ranges.size();
+    rr_laser_count = laser_scan->ranges.size();
 
     // To account for lasers that are mounted upside-down, we determine the
     // min, max, and increment angles of the laser in the base frame.
@@ -1252,6 +1418,8 @@ AmclNode::laserReceived(const sensor_msgs::LaserScanConstPtr& laser_scan)
 
     // wrapping angle to [-pi .. pi]
     angle_increment = fmod(angle_increment + 5*M_PI, 2*M_PI) - M_PI;
+    rr_laser_min_angle = angle_min;
+    rr_laser_increment_angle = angle_increment;
 
     ROS_DEBUG("Laser %d angles in base frame: min: %.3f inc: %.3f", laser_index, angle_min, angle_increment);
 
@@ -1265,6 +1433,7 @@ AmclNode::laserReceived(const sensor_msgs::LaserScanConstPtr& laser_scan)
       range_min = std::max(laser_scan->range_min, (float)laser_min_range_);
     else
       range_min = laser_scan->range_min;
+    rr_laser_max_range = ldata.range_max;
     // The AMCLLaserData destructor will free this memory
     ldata.ranges = new double[ldata.range_count][2];
     ROS_ASSERT(ldata.ranges);
@@ -1272,10 +1441,13 @@ AmclNode::laserReceived(const sensor_msgs::LaserScanConstPtr& laser_scan)
     {
       // amcl doesn't (yet) have a concept of min range.  So we'll map short
       // readings to max range.
-      if(laser_scan->ranges[i] <= range_min)
+      if(laser_scan->ranges[i] <= range_min) {
         ldata.ranges[i][0] = ldata.range_max;
-      else
+        rr_laser_scan[i] = ldata.range_max;
+      } else {
         ldata.ranges[i][0] = laser_scan->ranges[i];
+        rr_laser_scan[i] = laser_scan->ranges[i];
+      }
       // Compute bearing
       ldata.ranges[i][1] = angle_min +
               (i * angle_increment);
@@ -1605,4 +1777,55 @@ AmclNode::standardDeviationDiagnostics(diagnostic_updater::DiagnosticStatusWrapp
   {
     diagnostic_status.summary(diagnostic_msgs::DiagnosticStatus::OK, "OK");
   }
+}
+
+int
+AmclNode::calcuThreshold(const rr_laser_t& scan)
+{
+  auto obs_size = 0;
+  for (auto i = 0; i < rr_laser_count; i++) {
+    if (scan[i] < rr_laser_max_range) {
+      ++obs_size;
+    }
+  }
+  ROS_INFO("obs_size is %d", obs_size);
+  return (int)(obs_size * 0.5);
+}
+
+int
+AmclNode::calcuScore(const rr_laser_t& scan, rr_relocate_node_t& pose)
+{
+  auto score = 0;
+  for (auto i = 0; i < rr_laser_count; i++) {
+    if (scan[i] < rr_laser_max_range) {
+      auto offset_x = MAP_WXGX(map_, pose.x);
+      auto offset_y = MAP_WYGY(map_, pose.y);
+      auto theta = pose.theta + rr_laser_min_angle + rr_laser_increment_angle * i;
+      auto x = offset_x + scan[i] * cos(theta);
+      auto y = offset_y + scan[i] * sin(theta);
+      int index_x = MAP_GXWX(map_, x);
+      int index_y = MAP_GYWY(map_, y);
+      if (isMapObs(index_x, index_y)) {
+        ++score;
+      }
+//      ROS_INFO("round [%d/%d], match pose [%f, %f], range [%f], angle [%f]", i+1, rr_laser_count, x, y, scan[i], theta);
+//      ROS_INFO("%d\t%f\t%f\t%f\t%f", i+1, x, y, scan[i], theta);
+//      ROS_INFO("%d\t%d", offset_x, offset_y);
+//      ROS_INFO("match pose [%f, %f], occ state [%d]", x, y, map_->cells[MAP_INDEX(map_,index_x,index_y)].occ_state);
+    }
+  }
+  return score;
+}
+
+bool
+AmclNode::isMapObs(int x, int y) {
+  auto range = 0;
+  for (int i = -range; i <= range; i++) {
+    for (int j = -range; j <= range; j++) {
+      if (MAP_VALID(map_, x + i, y + j) && map_->cells[MAP_INDEX(map_, x + i, y + j)].occ_state == 1) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
