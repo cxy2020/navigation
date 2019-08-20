@@ -1223,9 +1223,10 @@ AmclNode::rangeLocalizationCallback(amcl::RectPara::Request& req,
     pf_relocate_pose_cov.m[2][2] = init_cov_[2];
     pf_init(pf_, pf_relocate_pose_mean, pf_relocate_pose_cov);
   } else {
-    pf_init_model(pf_, (pf_init_model_fn_t) AmclNode::areaPoseGenerator,
-                  (void*) map_);
-    ROS_INFO("Find best match failed! Generate random pfs");
+//    pf_init_model(pf_, (pf_init_model_fn_t) AmclNode::areaPoseGenerator,
+//                  (void*) map_);
+    ROS_INFO("Find best match failed!");
+    return false;
   }
   pf_init_ = false;
   return true;
