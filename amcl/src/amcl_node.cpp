@@ -76,8 +76,6 @@
 
 // For monitoring the estimator
 #include <diagnostic_updater/diagnostic_updater.h>
-#include <amcl/pf/pf_vector.h>
-#include <amcl/map/map.h>
 
 #define NEW_UNIFORM_SAMPLING 1
 
@@ -125,7 +123,6 @@ static double range_max_x;
 static double range_min_y;
 static double range_max_y;
 
-typedef AMCLLaserData rr_laser_range_t;
 typedef std::vector<double> rr_laser_t;
 typedef struct
 {
@@ -1263,8 +1260,6 @@ AmclNode::laserReceived(const sensor_msgs::LaserScanConstPtr& laser_scan)
   boost::recursive_mutex::scoped_lock lr(configuration_mutex_);
   int laser_index = -1;
 
-//  rr_laser_scan = laser_scan;
-
   // Do we have the base->base_laser Tx yet?
   if(frame_to_laser_.find(laser_scan_frame_id) == frame_to_laser_.end())
   {
@@ -1438,6 +1433,7 @@ AmclNode::laserReceived(const sensor_msgs::LaserScanConstPtr& laser_scan)
     // The AMCLLaserData destructor will free this memory
     ldata.ranges = new double[ldata.range_count][2];
     ROS_ASSERT(ldata.ranges);
+    rr_laser_scan.reserve(360);
     for(int i=0;i<ldata.range_count;i++)
     {
       // amcl doesn't (yet) have a concept of min range.  So we'll map short
