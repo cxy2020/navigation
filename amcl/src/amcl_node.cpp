@@ -364,12 +364,19 @@ AmclNode::AmclNode() :
         resample_count_(0),
         odom_(NULL),
         laser_(NULL),
-	      private_nh_("~"),
+	    private_nh_("~"),
         initial_pose_hyp_(NULL),
         first_map_received_(false),
         first_reconfigure_call_(true)
 {
   boost::recursive_mutex::scoped_lock l(configuration_mutex_);
+
+  // Add by Tony: Range localization parameter
+//  rr_laser_scan.reserve(360);
+  rr_laser_count = 0;
+  rr_laser_min_angle = 0.0;
+  rr_laser_max_range = 0.0;
+  rr_laser_increment_angle = 0.0;
 
   // Grab params off the param server
   private_nh_.param("use_map_topic", use_map_topic_, false);
@@ -522,12 +529,6 @@ AmclNode::AmclNode() :
 
   diagnosic_updater_.setHardwareID("None");
   diagnosic_updater_.add("Standard deviation", this, &AmclNode::standardDeviationDiagnostics);
-
-  rr_laser_scan.reserve(360);
-  rr_laser_count = 0;
-  rr_laser_min_angle = 0.0;
-  rr_laser_max_range = 0.0;
-  rr_laser_increment_angle = 0.0;
 }
 
 void AmclNode::reconfigureCB(AMCLConfig &config, uint32_t level)
@@ -1157,8 +1158,8 @@ AmclNode::rangeLocalizationCallback(amcl::RectPara::Request& req,
   int cell_max_y = MAP_GYWY(map_, range_max_y);
 
   bool updated = false;
-  auto single_laser = rr_laser_t(360);
-  for (auto i = 0; i < 360; i++) {
+  auto single_laser = rr_laser_t(rr_laser_count);
+  for (auto i = 0; i < rr_laser_count; i++) {
     single_laser[i] = rr_laser_scan[i];
   }
 //  rr_laser_count = single_laser->ranges.size();
@@ -1433,7 +1434,7 @@ AmclNode::laserReceived(const sensor_msgs::LaserScanConstPtr& laser_scan)
     // The AMCLLaserData destructor will free this memory
     ldata.ranges = new double[ldata.range_count][2];
     ROS_ASSERT(ldata.ranges);
-    rr_laser_scan.reserve(360);
+    rr_laser_scan.reserve(rr_laser_count);
     for(int i=0;i<ldata.range_count;i++)
     {
       // amcl doesn't (yet) have a concept of min range.  So we'll map short
