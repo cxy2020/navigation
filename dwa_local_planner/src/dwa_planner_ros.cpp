@@ -147,6 +147,8 @@ namespace dwa_local_planner {
     //when we get a new plan, we also want to clear any latch we may have on goal tolerances
     latchedStopRotateController_.resetLatching();
 
+    rr_start_rotation_ = true;
+
     ROS_INFO("Got new plan");
     return dp_->setPlan(orig_global_plan);
   }
@@ -282,6 +284,45 @@ namespace dwa_local_planner {
 
     // update plan in dwa_planner even if we just stop and rotate, to allow checkTrajectory
     dp_->updatePlanAndLocalCosts(current_pose_, transformed_plan, costmap_ros_->getRobotFootprint());
+
+    //add by Tony: in-place rotation in the beginning
+    const geometry_msgs::PoseStamped& start_point = transformed_plan.front();
+    const double start_x = start_point.pose.position.x;
+    const double start_y = start_point.pose.position.y;
+    const double start_yaw = tf2::getYaw(start_point.pose.orientation);
+    const double angle = base_local_planner::getGoalOrientationAngleDifference(current_pose_, start_yaw);
+
+    if (((fabs(angle) > M_PI_4)) && (base_local_planner::getGoalPositionDistance(current_pose_, start_x, start_y) <= 0.1)) {
+      if (rr_start_rotation_) {
+        if (fabs(angle) <= M_PI / 36) {
+          cmd_vel.linear.x  = 0.0;
+          cmd_vel.linear.y  = 0.0;
+          cmd_vel.angular.z = 0.0;
+          rr_start_rotation_ = false;
+        } else {
+          geometry_msgs::PoseStamped robot_vel;
+          odom_helper_.getRobotVel(robot_vel);
+          base_local_planner::LocalPlannerLimits limits = planner_util_.getCurrentLimits();
+
+          if (!latchedStopRotateController_.rotateToGoal(
+                  current_pose_,
+                  robot_vel,
+                  start_yaw,
+                  cmd_vel,
+                  limits.getAccLimits(),
+                  dp_->getSimPeriod(),
+                  limits,
+                  boost::bind(&DWAPlanner::checkTrajectory, dp_, _1, _2, _3))) {
+            ROS_INFO("Error when rotating.");
+            return false;
+          }
+        }
+
+        publishGlobalPlan(transformed_plan);
+        return true;
+      }
+    }
+
 
     if (latchedStopRotateController_.isPositionReached(&planner_util_, current_pose_)) {
       //publish an empty plan because we've reached our goal position
