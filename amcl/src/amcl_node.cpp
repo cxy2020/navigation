@@ -1781,20 +1781,20 @@ int
 AmclNode::calcuThreshold(const rr_laser_t& scan)
 {
   auto obs_size = 0;
-  for (auto i = 0; i < rr_laser_count; i++) {
+  for (auto i = 0; i < rr_laser_count; i += 5) {
     if (scan[i] < rr_laser_max_range) {
       ++obs_size;
     }
   }
   ROS_INFO("obs_size is %d", obs_size);
-  return (int)(obs_size * 0.5);
+  return (int)(obs_size * 0.3);
 }
 
 int
 AmclNode::calcuScore(const rr_laser_t& scan, rr_relocate_node_t& pose)
 {
   auto score = 0;
-  for (auto i = 0; i < rr_laser_count; i++) {
+  for (auto i = 0; i < rr_laser_count; i += 5) {
     if (scan[i] < rr_laser_max_range) {
       auto offset_x = MAP_WXGX(map_, pose.x);
       auto offset_y = MAP_WYGY(map_, pose.y);
@@ -1817,7 +1817,7 @@ AmclNode::calcuScore(const rr_laser_t& scan, rr_relocate_node_t& pose)
 
 bool
 AmclNode::isMapObs(int x, int y) {
-  auto range = 0;
+  auto range = 1;
   for (int i = -range; i <= range; i++) {
     for (int j = -range; j <= range; j++) {
       if (MAP_VALID(map_, x + i, y + j) && map_->cells[MAP_INDEX(map_, x + i, y + j)].occ_state == 1) {
