@@ -493,9 +493,6 @@ AmclNode::AmclNode() :
   global_loc_srv_ = nh_.advertiseService("global_localization", 
 					 &AmclNode::globalLocalizationCallback,
                                          this);
-  range_loc_srv_ = nh_.advertiseService("range_localization",
-                                         &AmclNode::rangeLocalizationCallback,
-                                         this);
   nomotion_update_srv_= nh_.advertiseService("request_nomotion_update", &AmclNode::nomotionUpdateCallback, this);
   set_map_srv_= nh_.advertiseService("set_map", &AmclNode::setMapCallback, this);
 
@@ -529,6 +526,9 @@ AmclNode::AmclNode() :
 
   diagnosic_updater_.setHardwareID("None");
   diagnosic_updater_.add("Standard deviation", this, &AmclNode::standardDeviationDiagnostics);
+  range_loc_srv_ = nh_.advertiseService("range_localization",
+	                                      &AmclNode::rangeLocalizationCallback,
+	                                      this);
 }
 
 void AmclNode::reconfigureCB(AMCLConfig &config, uint32_t level)
@@ -1787,7 +1787,7 @@ AmclNode::calcuThreshold(const rr_laser_t& scan)
     }
   }
   ROS_INFO("obs_size is %d", obs_size);
-  return (int)(obs_size * 0.3);
+  return (int)(obs_size * 0.5);
 }
 
 int
