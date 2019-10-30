@@ -1171,10 +1171,10 @@ AmclNode::rangeLocalizationCallback(amcl::RectPara::Request& req,
   auto threshold = calcuThreshold(single_laser);
   auto local_score = 0;
 
-#pragma omp parallel for
+//#pragma omp parallel for
   for (auto th = -M_PI; th < M_PI;) {
-    for (auto x = cell_min_x; x <= cell_max_x; x++) {
-      for (auto y = cell_min_y; y <= cell_max_y; y++) {
+    for (auto x = cell_min_x; x <= cell_max_x; x += 2) {
+      for (auto y = cell_min_y; y <= cell_max_y; y += 2) {
         if (!MAP_VALID(map_, x, y) || map_->cells[MAP_INDEX(map_, x, y)].occ_state != -1)
           continue;
 
@@ -1189,7 +1189,7 @@ AmclNode::rangeLocalizationCallback(amcl::RectPara::Request& req,
         }
       }
     }
-    th += (M_PI / 180.0);
+    th += 3 * (M_PI / 180.0);
   }
 
   //Print map
@@ -1204,13 +1204,13 @@ AmclNode::rangeLocalizationCallback(amcl::RectPara::Request& req,
 //    }
 //  }
 
-  ROS_INFO("best score is %d", local_score);
+  ROS_WARN("best score is %d", local_score);
   if (updated) {
     pf_vector_t pf_relocate_pose_mean;
     pf_relocate_pose_mean.v[0] = MAP_WXGX(map_, best_node.x);
     pf_relocate_pose_mean.v[1] = MAP_WYGY(map_, best_node.y);
     pf_relocate_pose_mean.v[2] = best_node.theta;
-    ROS_INFO("Range relocate success! pose is [%.3f, %.3f, %.3f], score is %d",
+    ROS_WARN("Range relocate success! pose is [%.3f, %.3f, %.3f], score is %d",
              pf_relocate_pose_mean.v[0],
              pf_relocate_pose_mean.v[1],
              pf_relocate_pose_mean.v[2] * 180.0/ M_PI,
@@ -1223,7 +1223,7 @@ AmclNode::rangeLocalizationCallback(amcl::RectPara::Request& req,
   } else {
 //    pf_init_model(pf_, (pf_init_model_fn_t) AmclNode::areaPoseGenerator,
 //                  (void*) map_);
-    ROS_INFO("Find best match failed!");
+    ROS_WARN("Find best match failed!");
     return false;
   }
   pf_init_ = false;
@@ -1781,23 +1781,23 @@ int
 AmclNode::calcuThreshold(const rr_laser_t& scan)
 {
   auto obs_size = 0;
-  for (auto i = 0; i < rr_laser_count; i += 5) {
+  for (auto i = 0; i < rr_laser_count; i++) {
     if (scan[i] < rr_laser_max_range) {
       ++obs_size;
     }
   }
-  ROS_INFO("obs_size is %d", obs_size);
+  ROS_WARN("obs_size is %d", obs_size);
   return (int)(obs_size * 0.5);
 }
 
 int
 AmclNode::calcuScore(const rr_laser_t& scan, rr_relocate_node_t& pose)
 {
-  auto score = 0;
-  for (auto i = 0; i < rr_laser_count; i += 5) {
+  auto score    = 0;
+  auto offset_x = MAP_WXGX(map_, pose.x);
+  auto offset_y = MAP_WYGY(map_, pose.y);
+  for (auto i = 0; i < rr_laser_count; i++) {
     if (scan[i] < rr_laser_max_range) {
-      auto offset_x = MAP_WXGX(map_, pose.x);
-      auto offset_y = MAP_WYGY(map_, pose.y);
       auto theta = pose.theta + rr_laser_min_angle + rr_laser_increment_angle * i;
       auto x = offset_x + scan[i] * cos(theta);
       auto y = offset_y + scan[i] * sin(theta);
