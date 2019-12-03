@@ -1136,7 +1136,8 @@ AmclNode::rangeLocalizationCallback(amcl::RectPara::Request& req,
                                     amcl::RectPara::Response& res)
 {
   if( map_ == NULL ) {
-    return true;
+    ROS_ERROR("Map not ready! Localization failed...");
+    return false;
   }
   boost::recursive_mutex::scoped_lock gl(configuration_mutex_);
   range_min_x = req.rect_min_x;
