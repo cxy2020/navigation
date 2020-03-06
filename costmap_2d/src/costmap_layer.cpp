@@ -35,6 +35,23 @@ void CostmapLayer::clearArea(int start_x, int start_y, int end_x, int end_y)
   }
 }
 
+void CostmapLayer::clearInArea(int start_x, int start_y, int end_x, int end_y)
+{
+  unsigned char* grid = getCharMap();
+  for(int x=0; x<(int)getSizeInCellsX(); x++){
+    bool xrange = x>start_x && x<end_x;
+
+    for(int y=0; y<(int)getSizeInCellsY(); y++){
+      if(xrange && y>start_y && y<end_y) {
+        int index = getIndex(x,y);
+        if(grid[index]!=NO_INFORMATION){
+          grid[index] = NO_INFORMATION;
+        }
+      }
+    }
+  }
+}
+
 void CostmapLayer::addExtraBounds(double mx0, double my0, double mx1, double my1)
 {
     extra_min_x_ = std::min(mx0, extra_min_x_);
