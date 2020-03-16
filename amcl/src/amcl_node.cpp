@@ -123,12 +123,12 @@ static double range_max_x;
 static double range_min_y;
 static double range_max_y;
 
-typedef std::vector<std::pair<double, double>> rr_laser_t;
+typedef std::vector<std::pair<float, float>> rr_laser_t;
 typedef struct
 {
     int x, y;
-    double theta;
-    double score;
+    float theta;
+    float score;
 } rr_relocate_node_t;
 
 /* This function is only useful to have the whole code work
@@ -306,12 +306,12 @@ class AmclNode
     ros::Duration laser_check_interval_;
     void checkLaserReceived(const ros::TimerEvent& event);
 
-    std::vector<double> rr_laser_scan;
+    std::vector<float> rr_laser_scan;
     int rr_laser_count;
-    double rr_laser_min_angle, rr_laser_increment_angle, rr_laser_max_range;
-    std::vector<std::pair<double, double>> rr_prob_score;
-    double calcuThreshold(const rr_laser_t& scan, double avg);
-    double calcuScore(const rr_laser_t& scan, rr_relocate_node_t& pose, double avg, std::vector<double>& offset_x, std::vector<double>& offset_y);
+    float rr_laser_min_angle, rr_laser_increment_angle, rr_laser_max_range;
+    std::vector<std::pair<float, float>> rr_prob_score;
+    float calcuThreshold(const rr_laser_t& scan, float avg);
+    float calcuScore(const rr_laser_t& scan, rr_relocate_node_t& pose, float avg, std::vector<float>& offset_x, std::vector<float>& offset_y);
     bool isMapObs(int x, int y);
 };
 
@@ -373,7 +373,6 @@ AmclNode::AmclNode() :
   boost::recursive_mutex::scoped_lock l(configuration_mutex_);
 
   // Add by Tony: Range localization parameter
-//  rr_laser_scan.reserve(360);
   rr_laser_count = 0;
   rr_laser_min_angle = 0.0;
   rr_laser_max_range = 0.0;
@@ -1167,9 +1166,10 @@ AmclNode::rangeLocalizationCallback(amcl::RectPara::Request& req,
   int cell_min_y = MAP_GYWY(map_, range_min_y);
   int cell_max_y = MAP_GYWY(map_, range_max_y);
 
+  auto start_time = ros::Time::now();
   bool updated = false;
   rr_laser_t single_laser;
-  auto single_laser_avg_dist = 0.0;
+  float single_laser_avg_dist = 0.0;
   for (auto i = 0; i < rr_laser_count; i++) {
     if (rr_laser_scan[i] < rr_laser_max_range) {
       single_laser.push_back(std::make_pair(rr_laser_scan[i], rr_laser_min_angle + rr_laser_increment_angle * i));
@@ -1181,10 +1181,10 @@ AmclNode::rangeLocalizationCallback(amcl::RectPara::Request& req,
            rr_laser_min_angle, rr_laser_increment_angle, single_laser.size(), rr_laser_count, single_laser_avg_dist);
 
   // calculate sinB & cosB
-  std::vector<double> sin_b, cos_b;
-  for (auto scan:single_laser) {
-    sin_b.push_back(sin(scan.second));
-    cos_b.push_back(cos(scan.second));
+  std::vector<float> sin_b, cos_b;
+  for (auto& scan:single_laser) {
+    sin_b.push_back(sinf(scan.second));
+    cos_b.push_back(cosf(scan.second));
   }
 
   auto best_node = rr_relocate_node_t {};
@@ -1192,11 +1192,11 @@ AmclNode::rangeLocalizationCallback(amcl::RectPara::Request& req,
   auto local_score = 0.0;
 
 //#pragma omp parallel for
-  for (auto th = -M_PI; th < M_PI;) {
+  for (auto th = -M_PIf32; th < M_PIf32;) {
     // calculate sinA & cosA & C*sin(A+B) & C*cos(A+B)
-    auto sin_a = sin(th);
-    auto cos_a = cos(th);
-    std::vector<double> offset_x, offset_y;
+    auto sin_a = sinf(th);
+    auto cos_a = cosf(th);
+    std::vector<float> offset_x, offset_y;
     for (auto i = 0; i < single_laser.size(); i++) {
       offset_x.push_back(single_laser[i].first * (cos_a * cos_b[i] - sin_a * sin_b[i]));
       offset_y.push_back(single_laser[i].first * (sin_a * cos_b[i] + cos_a * sin_b[i]));
@@ -1218,7 +1218,7 @@ AmclNode::rangeLocalizationCallback(amcl::RectPara::Request& req,
         }
       }
     }
-    th += 3 * (M_PI / 180.0);
+    th += 3 * (M_PIf32 / 180.0);
   }
 
   //Print map
@@ -1233,7 +1233,7 @@ AmclNode::rangeLocalizationCallback(amcl::RectPara::Request& req,
 //    }
 //  }
 
-//  ROS_WARN("best score is %d", local_score);
+  ROS_WARN("best score is %.1f", local_score);
   if (updated) {
     ROS_WARN("origin data, [%.3f, %.3f, %.3f]", MAP_WXGX(map_, best_node.x), MAP_WYGY(map_, best_node.y), best_node.theta);
     // best node reflect laser frame in map's pose, we need base frame in map's pose
@@ -1242,23 +1242,19 @@ AmclNode::rangeLocalizationCallback(amcl::RectPara::Request& req,
     try
     {
       tf2::Quaternion q;
-      q.setRPY(0, 0, best_node.theta);
-      tf2::Transform tmp_tf(q, tf2::Vector3(MAP_WXGX(map_, best_node.x),
-                                            MAP_WYGY(map_, best_node.y),
+      q.setRPY(0, 0, static_cast<double>(best_node.theta));
+      tf2::Transform tmp_tf(q, tf2::Vector3(MAP_WXGX(map_, static_cast<double>(best_node.x)),
+                                            MAP_WYGY(map_, static_cast<double>(best_node.y)),
                                             0.0));
 
       geometry_msgs::PoseStamped tmp_p_stamped, base_to_map;
       tmp_p_stamped.header.frame_id = "laser";
-      tmp_p_stamped.header.stamp = ros::Time();
+      tmp_p_stamped.header.stamp = ros::Time(0);
       tf2::toMsg(tmp_tf.inverse(), tmp_p_stamped.pose);
       this->tf_->transform(tmp_p_stamped, base_to_map, base_frame_id_);
 
       tf2::convert(base_to_map.pose, tmp_tf);
       tf2::convert(tmp_tf.inverse(), tmp_tf_stamped.transform);
-      ROS_WARN("tmp data, [%.3f, %.3f, %.3f]",
-               tmp_tf_stamped.transform.translation.x,
-               tmp_tf_stamped.transform.translation.y,
-               2 * asin(tmp_tf_stamped.transform.rotation.z));
     }
     catch(tf2::TransformException)
     {
@@ -1269,7 +1265,7 @@ AmclNode::rangeLocalizationCallback(amcl::RectPara::Request& req,
     pf_vector_t pf_relocate_pose_mean;
     pf_relocate_pose_mean.v[0] = tmp_tf_stamped.transform.translation.x;
     pf_relocate_pose_mean.v[1] = tmp_tf_stamped.transform.translation.y;
-    pf_relocate_pose_mean.v[2] = best_node.theta;
+    pf_relocate_pose_mean.v[2] = tf2::getYaw(tmp_tf_stamped.transform.rotation);
     ROS_WARN("Range relocate success! pose is [%.3f, %.3f, %.3f], score is %.1f",
              pf_relocate_pose_mean.v[0],
              pf_relocate_pose_mean.v[1],
@@ -1288,6 +1284,7 @@ AmclNode::rangeLocalizationCallback(amcl::RectPara::Request& req,
     return false;
   }
   pf_init_ = false;
+  ROS_ERROR("Relocation duration is %.3fs", (ros::Time::now() - start_time).toSec());
   return true;
 }
 
@@ -1443,7 +1440,11 @@ AmclNode::laserReceived(const sensor_msgs::LaserScanConstPtr& laser_scan)
     AMCLLaserData ldata;
     ldata.sensor = lasers_[laser_index];
     ldata.range_count = laser_scan->ranges.size();
-    rr_laser_count = laser_scan->ranges.size();
+    rr_laser_count = static_cast<int>(laser_scan->ranges.size());
+    rr_laser_min_angle = static_cast<float>(laser_scan->angle_min);
+    rr_laser_increment_angle = static_cast<float>(laser_scan->angle_increment);
+    rr_laser_max_range = static_cast<float>(laser_scan->range_max);
+    rr_laser_scan.reserve(rr_laser_count);
 
     // To account for lasers that are mounted upside-down, we determine the
     // min, max, and increment angles of the laser in the base frame.
@@ -1476,8 +1477,6 @@ AmclNode::laserReceived(const sensor_msgs::LaserScanConstPtr& laser_scan)
 
     // wrapping angle to [-pi .. pi]
     angle_increment = fmod(angle_increment + 5*M_PI, 2*M_PI) - M_PI;
-    rr_laser_min_angle = angle_min;  // Note by Tony: now is same with laser_scan->angle**, but maybe a bomb when laser frame change.
-    rr_laser_increment_angle = angle_increment;
 
     ROS_DEBUG("Laser %d angles in base frame: min: %.3f inc: %.3f", laser_index, angle_min, angle_increment);
 
@@ -1491,21 +1490,19 @@ AmclNode::laserReceived(const sensor_msgs::LaserScanConstPtr& laser_scan)
       range_min = std::max(laser_scan->range_min, (float)laser_min_range_);
     else
       range_min = laser_scan->range_min;
-    rr_laser_max_range = ldata.range_max;
     // The AMCLLaserData destructor will free this memory
     ldata.ranges = new double[ldata.range_count][2];
     ROS_ASSERT(ldata.ranges);
-    rr_laser_scan.reserve(rr_laser_count);
     for(int i=0;i<ldata.range_count;i++)
     {
       // amcl doesn't (yet) have a concept of min range.  So we'll map short
       // readings to max range.
       if(laser_scan->ranges[i] <= range_min) {
         ldata.ranges[i][0] = ldata.range_max;
-        rr_laser_scan[i] = ldata.range_max;
+        rr_laser_scan[i] = rr_laser_max_range;
       } else {
         ldata.ranges[i][0] = laser_scan->ranges[i];
-        rr_laser_scan[i] = laser_scan->ranges[i];
+        rr_laser_scan[i] = static_cast<float>(laser_scan->ranges[i]);
       }
       // Compute bearing
       ldata.ranges[i][1] = angle_min +
@@ -1838,10 +1835,10 @@ AmclNode::standardDeviationDiagnostics(diagnostic_updater::DiagnosticStatusWrapp
   }
 }
 
-double
-AmclNode::calcuThreshold(const rr_laser_t& scan, double avg)
+float
+AmclNode::calcuThreshold(const rr_laser_t& scan, float avg)
 {
-  auto obs_score = 0.0;
+  float obs_score = 0.0;
   for (auto s:scan) {
     for (auto k = 0; k < 4; k++) {
       if (s.first > rr_prob_score[k].first * avg && s.first <= rr_prob_score[k + 1].first * avg) {
@@ -1855,13 +1852,14 @@ AmclNode::calcuThreshold(const rr_laser_t& scan, double avg)
     }
   }
   ROS_WARN("obs_score is %.1f", obs_score);
-  return obs_score * 0.5;
+  // TODO: threshold can be modified
+  return static_cast<float>(obs_score * 0.5);
 }
 
-double
-AmclNode::calcuScore(const rr_laser_t& scan, rr_relocate_node_t& pose, double avg, std::vector<double>& offset_x, std::vector<double>& offset_y)
+float
+AmclNode::calcuScore(const rr_laser_t& scan, rr_relocate_node_t& pose, float avg, std::vector<float>& offset_x, std::vector<float>& offset_y)
 {
-  auto score    = 0.0;
+  float score    = 0.0;
   auto origin_x = MAP_WXGX(map_, pose.x);
   auto origin_y = MAP_WYGY(map_, pose.y);
   for (auto i = 0; i < scan.size(); i++) {
