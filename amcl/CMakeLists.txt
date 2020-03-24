@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.1)
 project(amcl)
 
+include(CheckIncludeFile)
+include(CheckSymbolExists)
+
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 11)
 endif()
@@ -11,10 +14,12 @@ find_package(catkin REQUIRED
     dynamic_reconfigure
     geometry_msgs
     message_filters
+    message_generation
     nav_msgs
     rosbag
     roscpp
     sensor_msgs
+    std_msgs
     std_srvs
     tf2
     tf2_geometry_msgs
@@ -23,6 +28,18 @@ find_package(catkin REQUIRED
 )
 
 find_package(Boost REQUIRED)
+
+# services
+add_service_files(
+        DIRECTORY srv
+        FILES
+        RectPara.srv
+)
+
+generate_messages(
+        DEPENDENCIES
+        std_msgs
+)
 
 # dynamic reconfigure
 generate_dynamic_reconfigure_options(

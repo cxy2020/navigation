@@ -151,6 +151,8 @@ namespace dwa_local_planner {
 
       bool initialized_;
 
+      bool rr_start_rotation_;
+
 
       base_local_planner::OdometryHelperRos odom_helper_;
       std::string odom_topic_;

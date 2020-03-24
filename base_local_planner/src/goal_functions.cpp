@@ -38,6 +38,11 @@
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2/utils.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#ifdef _MSC_VER
+#define GOAL_ATTRIBUTE_UNUSED
+#else
+#define GOAL_ATTRIBUTE_UNUSED __attribute__ ((unused))
+#endif
 
 namespace base_local_planner {
 
@@ -79,7 +84,7 @@ namespace base_local_planner {
       double x_diff = global_pose.pose.position.x - w.pose.position.x;
       double y_diff = global_pose.pose.position.y - w.pose.position.y;
       double distance_sq = x_diff * x_diff + y_diff * y_diff;
-      if(distance_sq < 1){
+      if(distance_sq < 0.5){
         ROS_DEBUG("Nearest waypoint to <%f, %f> is <%f, %f>\n", global_pose.pose.position.x, global_pose.pose.position.y, w.pose.position.x, w.pose.position.y);
         break;
       }
@@ -203,7 +208,7 @@ namespace base_local_planner {
 
   bool isGoalReached(const tf2_ros::Buffer& tf,
       const std::vector<geometry_msgs::PoseStamped>& global_plan,
-      const costmap_2d::Costmap2D& costmap __attribute__((unused)),
+      const costmap_2d::Costmap2D& costmap GOAL_ATTRIBUTE_UNUSED,
       const std::string& global_frame,
       geometry_msgs::PoseStamped& global_pose,
       const nav_msgs::Odometry& base_odom,
