@@ -45,6 +45,8 @@
 #include <tf2/utils.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
+#include "costmap_2d/time_recorder.h"
+
 using namespace std;
 
 namespace costmap_2d
@@ -78,6 +80,12 @@ Costmap2DROS::Costmap2DROS(const std::string& name, tf2_ros::Buffer& tf) :
     dsrv_(NULL),
     footprint_padding_(0.0)
 {
+  if (name_ == "global_costmap") {
+    time_index_ = G_MAP;
+  }
+  else {
+    time_index_ = L_MAP;
+  }
   // Initialize old pose with something
   tf2::toMsg(tf2::Transform::getIdentity(), old_pose_.pose);
 
@@ -112,7 +120,7 @@ Costmap2DROS::Costmap2DROS(const std::string& name, tf2_ros::Buffer& tf) :
   private_nh.param("track_unknown_space", track_unknown_space, false);
   private_nh.param("always_send_full_costmap", always_send_full_costmap, false);
 
-  layered_costmap_ = new LayeredCostmap(global_frame_, rolling_window, track_unknown_space);
+  layered_costmap_ = new LayeredCostmap(global_frame_, rolling_window, track_unknown_space, time_index_);
 
   if (!private_nh.hasParam("plugins"))
   {
@@ -439,8 +447,11 @@ void Costmap2DROS::mapUpdateLoop(double frequency)
 
   ros::NodeHandle nh;
   ros::Rate r(frequency);
+  TimeRecorder* time_recorder = TimeRecorder::get_instance();
+  int time_index = time_index_ + G_R33;
   while (nh.ok() && !map_update_thread_shutdown_)
   {
+    time_recorder->start_record(time_index);
     #ifdef HAVE_SYS_TIME_H
     struct timeval start, end;
     double start_t, end_t, t_diff;
@@ -470,6 +481,7 @@ void Costmap2DROS::mapUpdateLoop(double frequency)
         last_publish_ = now;
       }
     }
+    time_recorder->end_record(time_index);
     r.sleep();
     // make sure to sleep for the remainder of our cycle time
     if (r.cycleTime() > ros::Duration(1 / frequency))
@@ -490,7 +502,9 @@ void Costmap2DROS::updateMap()
              y = pose.pose.position.y,
              yaw = tf2::getYaw(pose.pose.orientation);
 
+      TimeRecorder::get_instance()->start_record(time_index_);
       layered_costmap_->updateMap(x, y, yaw);
+      TimeRecorder::get_instance()->end_record(time_index_);
 
       geometry_msgs::PolygonStamped footprint;
       footprint.header.frame_id = global_frame_;

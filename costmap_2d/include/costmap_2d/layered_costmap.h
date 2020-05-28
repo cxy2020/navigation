@@ -58,7 +58,7 @@ public:
   /**
    * @brief  Constructor for a costmap
    */
-  LayeredCostmap(std::string global_frame, bool rolling_window, bool track_unknown);
+  LayeredCostmap(std::string global_frame, bool rolling_window, bool track_unknown, int time_index);
 
   /**
    * @brief  Destructor
@@ -154,6 +154,10 @@ public:
    * This is updated by setFootprint(). */
   double getInscribedRadius() { return inscribed_radius_; }
 
+  inline int time_index() const {
+    return time_index_;
+  }
+
 private:
   Costmap2D costmap_;
   std::string global_frame_;
@@ -170,6 +174,7 @@ private:
   bool size_locked_;
   double circumscribed_radius_, inscribed_radius_;
   std::vector<geometry_msgs::Point> footprint_;
+  int time_index_;
 };
 
 }  // namespace costmap_2d

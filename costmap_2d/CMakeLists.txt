@@ -85,6 +85,8 @@ catkin_package(
 add_library(costmap_2d
   src/array_parser.cpp
   src/costmap_2d.cpp
+  src/periodic_thread.cpp
+  src/time_recorder.cpp
   src/observation_buffer.cpp
   src/layer.cpp
   src/layered_costmap.cpp

@@ -42,6 +42,8 @@
 #include <pluginlib/class_list_macros.h>
 #include <sensor_msgs/point_cloud2_iterator.h>
 
+#include "costmap_2d/time_recorder.h"
+
 PLUGINLIB_EXPORT_CLASS(costmap_2d::ObstacleLayer, costmap_2d::Layer)
 
 using costmap_2d::NO_INFORMATION;
@@ -333,30 +335,48 @@ void ObstacleLayer::pointCloud2Callback(const sensor_msgs::PointCloud2ConstPtr& 
 void ObstacleLayer::updateBounds(double robot_x, double robot_y, double robot_yaw, double* min_x,
                                           double* min_y, double* max_x, double* max_y)
 {
-  if (rolling_window_)
+  TimeRecorder* time_recorder = TimeRecorder::get_instance();
+  int time_index = layered_costmap_->time_index() + G_R20;
+  if (rolling_window_) {
+    time_recorder->start_record(time_index);     //21
     updateOrigin(robot_x - getSizeInMetersX() / 2, robot_y - getSizeInMetersY() / 2);
+    time_recorder->end_record(time_index++);
+  }
+  else {
+    ++time_index;
+  }
+
   if (!enabled_)
     return;
+  time_recorder->start_record(time_index);     //22
   useExtraBounds(min_x, min_y, max_x, max_y);
+  time_recorder->end_record(time_index++);
 
   bool current = true;
   std::vector<Observation> observations, clearing_observations;
 
+  time_recorder->start_record(time_index);     //23
   // get the marking observations
   current = current && getMarkingObservations(observations);
+  time_recorder->end_record(time_index++);
 
+  time_recorder->start_record(time_index);     //24
   // get the clearing observations
   current = current && getClearingObservations(clearing_observations);
+  time_recorder->end_record(time_index++);
 
   // update the global current status
   current_ = current;
 
+  time_recorder->start_record(time_index);     //25
   // raytrace freespace
   for (unsigned int i = 0; i < clearing_observations.size(); ++i)
   {
     raytraceFreespace(clearing_observations[i], min_x, min_y, max_x, max_y);
   }
+  time_recorder->end_record(time_index++);
 
+  time_recorder->start_record(time_index);     //26
   // place the new obstacles into a priority queue... each with a priority of zero to begin with
   for (std::vector<Observation>::const_iterator it = observations.begin(); it != observations.end(); ++it)
   {
@@ -405,8 +425,11 @@ void ObstacleLayer::updateBounds(double robot_x, double robot_y, double robot_ya
       touch(px, py, min_x, min_y, max_x, max_y);
     }
   }
+  time_recorder->end_record(time_index++);
 
+  time_recorder->start_record(time_index);     //27
   updateFootprint(robot_x, robot_y, robot_yaw, min_x, min_y, max_x, max_y);
+  time_recorder->end_record(time_index++);
 }
 
 void ObstacleLayer::updateFootprint(double robot_x, double robot_y, double robot_yaw, double* min_x, double* min_y,
